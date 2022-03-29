@@ -14,14 +14,17 @@ import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import com.jakewharton.rx.ReplayingShare
 import com.polidea.rxandroidble2.*
 import com.polidea.rxandroidble2.internal.RxBleLog
+import io.reactivex.Observable
 import tech.rutschmann.ledmaster.R
 import tech.rutschmann.ledmaster.databinding.FragmentHomeBinding
 import io.reactivex.android.schedulers.AndroidSchedulers
+import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
-
-//import com.polidea.rxandroidble2.;
+import io.reactivex.subjects.PublishSubject
+import java.util.UUID
 
 class HomeFragment : Fragment() {
 
@@ -29,11 +32,16 @@ class HomeFragment : Fragment() {
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
 
-
-    private lateinit var bleDevice: RxBleDevice
+    private lateinit var characteristicUuid: UUID
+    private val disconnectTriggerSubject = PublishSubject.create<Unit>()
+    private lateinit var connectionObservable: Observable<RxBleConnection>
+    private val connectionDisposable = CompositeDisposable()
     private lateinit var rxBleClient: RxBleClient
+    private lateinit var bleDevice: RxBleDevice
     private var stateDisposable: Disposable? = null
-    private var connectionDisposable: Disposable? = null
+
+    private val inputBytes: ByteArray
+        get() = "report:1".toByteArray()
 
     override fun onCreateView(
             inflater: LayoutInflater,
@@ -48,11 +56,11 @@ class HomeFragment : Fragment() {
 
         val macAddress = "84:CC:A8:5E:C6:FA"
         val characteristic = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-        rxBleClient = RxBleClient.create(requireContext())
 
         RxBleLog.updateLogOptions(LogOptions.Builder().setLogLevel(LogConstants.VERBOSE).build())
-
+        rxBleClient = RxBleClient.create(requireContext())
         bleDevice = rxBleClient.getBleDevice(macAddress)
+        connectionObservable = prepareConnectionObservable()
         bleDevice.observeConnectionStateChanges()
             .observeOn(AndroidSchedulers.mainThread())
             .subscribe { onConnectionStateChange(it) }
@@ -60,6 +68,7 @@ class HomeFragment : Fragment() {
 
 
         binding.connectButton.setOnClickListener{onConnectClicked()}
+        binding.writeButton.setOnClickListener{onWriteClick()}
 
         return root
     }
@@ -68,23 +77,49 @@ class HomeFragment : Fragment() {
         if (bleDevice.connectionState == RxBleConnection.RxBleConnectionState.CONNECTED) {
             triggerDisconnect()
         } else {
-            bleDevice.establishConnection(false)
+            connectionObservable
+                .flatMapSingle { it.discoverServices() }
+                .flatMapSingle { it.getCharacteristic(characteristicUuid) }
                 .observeOn(AndroidSchedulers.mainThread())
-                .doFinally { dispose() }
-                .subscribe({ onConnectionReceived() }, { onConnectionFailure(it) })
-                .let { connectionDisposable = it }
+                .doOnSubscribe { binding.connectButton.setText("Connecting") }
+                .subscribe(
+                    { characteristic ->
+                        updateUI()
+                        print("Hey, connection has been established!")
+                    },
+                    { onConnectionFailure(it) },
+                    { updateUI() }
+                )
+                .let { connectionDisposable.add(it) }
         }
 
-        //disposable.dispose()
         Toast.makeText(getActivity(), "You clicked me.", Toast.LENGTH_SHORT).show()
     }
 
-    private fun dispose() {
-        connectionDisposable = null
-        updateUI()
+    private fun onWriteSuccess() {
+        Toast.makeText(getActivity(), "Write Succeeded", Toast.LENGTH_SHORT).show()
+    }
+    private fun onWriteFailure(throwable: Throwable) {
+        Toast.makeText(getActivity(), "Write Failed $throwable ", Toast.LENGTH_SHORT).show()
     }
 
-    private fun triggerDisconnect() = connectionDisposable?.dispose()
+    private fun onWriteClick() {
+        if (bleDevice.connectionState == RxBleConnection.RxBleConnectionState.CONNECTED) {
+            connectionObservable
+                .firstOrError()
+                .flatMap { it.writeCharacteristic(characteristicUuid, inputBytes) }
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe({ onWriteSuccess() }, { onWriteFailure(it) })
+                .let { connectionDisposable.add(it) }
+        }
+    }
+
+    private fun prepareConnectionObservable(): Observable<RxBleConnection> =
+        bleDevice.establishConnection(false)
+            .takeUntil(disconnectTriggerSubject)
+            .compose(ReplayingShare.instance())
+
+    private fun triggerDisconnect() = disconnectTriggerSubject.onNext(Unit)
 
     private fun onNotificationReceived(bytes: ByteArray) {
         //print("Change: ${bytes.toHex()}")
