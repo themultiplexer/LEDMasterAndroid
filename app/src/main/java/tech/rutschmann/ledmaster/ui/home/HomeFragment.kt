@@ -1,15 +1,14 @@
 package tech.rutschmann.ledmaster.ui.home
 
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.SeekBar
+import android.widget.*
 import android.widget.SeekBar.OnSeekBarChangeListener
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import com.jakewharton.rx.ReplayingShare
@@ -40,6 +39,7 @@ class HomeFragment : Fragment() {
     private lateinit var rxBleClient: RxBleClient
     private lateinit var bleDevice: RxBleDevice
     private var stateDisposable: Disposable? = null
+    private lateinit var pbars : Array<ProgressBar>
 
     fun ByteArray.toHexString() = joinToString("") { "%02x".format(it) }
     fun Boolean.toInt() = if (this) 1 else 0
@@ -53,6 +53,8 @@ class HomeFragment : Fragment() {
 
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         val root: View = binding.root
+
+        pbars = arrayOf(binding.progressBar1, binding.progressBar2,binding.progressBar3, binding.progressBar4, binding.progressBar5, binding.progressBar6, binding.progressBar7)
 
         RxBleLog.updateLogOptions(LogOptions.Builder().setLogLevel(LogConstants.VERBOSE).build())
         rxBleClient = RxBleClient.create(requireContext())
@@ -91,6 +93,19 @@ class HomeFragment : Fragment() {
             }
 
             binding.linearLayout.addView(btnTag)
+        }
+
+        for (pbar in pbars){
+            pbar.setOnClickListener { bar  ->
+                for (ibar in pbars) {
+                    if (ibar == bar){
+                        ibar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#FF9800")));
+                    } else {
+                        ibar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#009688")));
+                    }
+                }
+                send("band:${bar.tag}")
+            }
         }
 
 
@@ -176,7 +191,6 @@ class HomeFragment : Fragment() {
     }
 
     private fun onNotificationReceived(bytes: ByteArray) {
-        val pbars = arrayOf(binding.progressBar1, binding.progressBar2,binding.progressBar3, binding.progressBar4, binding.progressBar5, binding.progressBar6, binding.progressBar7)
         for (i in bytes.indices){
             pbars[i].setProgress(bytes[i].toUByte().toInt(), true)
         }
